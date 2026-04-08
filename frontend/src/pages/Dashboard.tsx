@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { Link } from "react-router-dom";
-import { api } from "../api";
+import { api, connectProviderWS } from "../api";
 
 const LANG_LABELS: Record<string, string> = {
   es: "Spanish", zh: "Mandarin", vi: "Vietnamese", ar: "Arabic", ht: "Haitian Creole",
@@ -17,19 +17,71 @@ function getInitials(name: string) {
 export default function Dashboard() {
   const [stats, setStats] = useState<any>(null);
   const [patients, setPatients] = useState<any[]>([]);
-  const [timeline, setTimeline] = useState<any[]>([]);
+  const [allEvents, setAllEvents] = useState<any[]>([]);
   const [selected, setSelected] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [calDate, setCalDate] = useState(new Date());
+  const [liveEvents, setLiveEvents] = useState<any[]>([]);
+  const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
-    Promise.all([api.stats(), api.patientsEnriched(), api.timeline()])
-      .then(([s, p, t]) => {
+    Promise.all([api.stats(), api.patientsEnriched(), api.timeline(), api.activityFeed()])
+      .then(([s, p, t, af]) => {
         setStats(s);
         setPatients(p.patients || []);
-        setTimeline(t.events || []);
+        setAllEvents(t.events || []);
+        setLiveEvents(af.events || []);
       })
       .finally(() => setLoading(false));
   }, []);
+
+  // WebSocket for real-time patient events
+  useEffect(() => {
+    wsRef.current = connectProviderWS((msg) => {
+      if (msg.type === "patient_event") {
+        setLiveEvents(prev => [msg, ...prev].slice(0, 20));
+      }
+    });
+    return () => { wsRef.current?.close(); };
+  }, []);
+
+  // Build set of dates that have events (from check-ins across all patients)
+  const eventDays = new Set<string>();
+  patients.forEach(p => {
+    (p.recent_check_ins || []).forEach((ci: any) => {
+      if (ci.scheduled_at) {
+        const d = new Date(ci.scheduled_at);
+        eventDays.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
+      }
+    });
+  });
+  allEvents.forEach(ev => {
+    const d = new Date(ev.time);
+    eventDays.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
+  });
+
+  // Filter timeline events to selected calendar date
+  const calDateStr = `${calDate.getFullYear()}-${String(calDate.getMonth() + 1).padStart(2, "0")}-${String(calDate.getDate()).padStart(2, "0")}`;
+  const isToday = calDateStr === `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}-${String(new Date().getDate()).padStart(2, "0")}`;
+
+  // For today, use the timeline API events; for other dates, build from patient check-ins
+  const timeline = isToday
+    ? allEvents
+    : patients.flatMap(p =>
+        (p.recent_check_ins || [])
+          .filter((ci: any) => {
+            if (!ci.scheduled_at) return false;
+            const d = new Date(ci.scheduled_at);
+            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}` === calDateStr;
+          })
+          .map((ci: any) => ({
+            time: ci.scheduled_at,
+            title: `${ci.check_in_type.replace("_", " ").replace(/^./, (c: string) => c.toUpperCase())} Check-In`,
+            patient_name: `${p.patient.first_name} ${p.patient.last_name}`,
+            color: ci.check_in_type === "medication" ? "#3B82F6" : ci.check_in_type === "symptom" ? "#F59E0B" : "#10B981",
+            status: ci.status,
+          }))
+      ).sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
 
   if (loading) return <div className="main-area" style={{justifyContent:"center",alignItems:"center"}}><span style={{color:"#999"}}>Loading dashboard...</span></div>;
 
@@ -46,7 +98,7 @@ export default function Dashboard() {
     <div className="shell" style={{ flex: 1, height: "100%" }}>
       <main className="main-area">
         {/* Greeting */}
-        <h1 className="greeting">Good morning, Dr. Reyes</h1>
+        <h1 className="greeting">Good morning</h1>
         <p className="greeting-sub">
           You have <b>{stats?.total_patients || 0} LEP patients</b> with active care plans today.{" "}
           <b>{stats?.patients_with_alerts || 0} alerts</b> need your attention.
@@ -213,17 +265,19 @@ export default function Dashboard() {
 
       {/* Right Sidebar */}
       <aside className="right-bar">
-        <Calendar />
+        <Calendar selectedDate={calDate} onSelectDate={setCalDate} eventDays={eventDays} />
         <button className="add-event-btn" onClick={() => window.location.href = "/enroll"}>+ Enroll patient</button>
 
         <div className="timeline-header">
-          <span>Today</span>
-          <span className="timeline-sublabel">Timeline</span>
+          <span>{isToday ? "Today" : calDate.toLocaleDateString("default", { month: "short", day: "numeric" })}</span>
+          <span className="timeline-sublabel">{isToday ? "Today's timeline" : "Timeline"}</span>
           <Link to="/schedule" className="pill">All</Link>
         </div>
         {timeline.length === 0 ? (
-          <div style={{ fontSize: 12, color: "#999", padding: "8px 0" }}>No events scheduled today.</div>
-        ) : timeline.slice(0, 6).map((ev, i) => {
+          <div style={{ fontSize: 12, color: "#999", padding: "8px 0" }}>
+            No events {isToday ? "scheduled today" : `on ${calDate.toLocaleDateString()}`}.
+          </div>
+        ) : timeline.slice(0, 8).map((ev, i) => {
           const t = new Date(ev.time);
           const timeStr = t.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
           return (
@@ -237,40 +291,96 @@ export default function Dashboard() {
             </div>
           );
         })}
+
+        {/* Live Activity Feed */}
+        <div className="timeline-header" style={{ marginTop: 8 }}>
+          <span>Live activity</span>
+          <span className="timeline-sublabel" style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: liveEvents.length > 0 ? "#4a7c59" : "#ccc", display: "inline-block", animation: liveEvents.length > 0 ? "pulse 2s infinite" : "none" }} />
+            Real-time
+          </span>
+        </div>
+        <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}`}</style>
+        {liveEvents.length === 0 ? (
+          <div style={{ fontSize: 11, color: "#999", padding: "6px 0" }}>No patient activity yet. Events appear here in real-time when patients use the app.</div>
+        ) : liveEvents.slice(0, 8).map((ev, i) => {
+          const typeIcons: Record<string, string> = { task_completed: "\u2705", flag_triggered: "\u{1F6A8}", call_started: "\u{1F4DE}", call_ended: "\u{1F4F4}", doc_viewed: "\u{1F4C4}", symptom_reported: "\u{2764}\u{FE0F}" };
+          const typeColors: Record<string, string> = { task_completed: "#4a7c59", flag_triggered: "#e74c3c", call_started: "#3B82F6", call_ended: "#6B7280", doc_viewed: "#8B5CF6", symptom_reported: "#F59E0B" };
+          const ago = ev.created_at ? new Date(ev.created_at) : null;
+          const agoStr = ago ? `${Math.max(0, Math.round((Date.now() - ago.getTime()) / 60000))}m` : "";
+          return (
+            <div className="timeline-item" key={ev.id || i}>
+              <span className="timeline-time">{agoStr}</span>
+              <div className="timeline-dot" style={{ background: typeColors[ev.event_type] || "#999" }} />
+              <div className="timeline-card" style={{ borderLeft: `3px solid ${typeColors[ev.event_type] || "#999"}`, padding: "6px 10px" }}>
+                <div className="timeline-card-title">{typeIcons[ev.event_type] || "\u{1F4CB}"} {(ev.event_type || "").replace(/_/g, " ")}</div>
+                <div className="timeline-card-sub">{ev.patient_name}{ev.event_data?.task ? ` — ${ev.event_data.task}` : ""}</div>
+              </div>
+            </div>
+          );
+        })}
       </aside>
     </div>
   );
 }
 
-function Calendar() {
+function Calendar({ selectedDate, onSelectDate, eventDays }: {
+  selectedDate: Date;
+  onSelectDate: (d: Date) => void;
+  eventDays: Set<string>; // "YYYY-MM-DD" strings with events
+}) {
+  const [viewYear, setViewYear] = useState(selectedDate.getFullYear());
+  const [viewMonth, setViewMonth] = useState(selectedDate.getMonth());
+
   const now = new Date();
-  const year = now.getFullYear();
-  const month = now.getMonth();
-  const today = now.getDate();
-  const monthName = now.toLocaleString("default", { month: "long", year: "numeric" });
-  const firstDay = (new Date(year, month, 1).getDay() + 6) % 7; // Monday-based
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const days = ["MO","TU","WE","TH","FR","SA","SU"];
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  const selectedStr = `${selectedDate.getFullYear()}-${String(selectedDate.getMonth() + 1).padStart(2, "0")}-${String(selectedDate.getDate()).padStart(2, "0")}`;
+
+  const monthName = new Date(viewYear, viewMonth).toLocaleString("default", { month: "long", year: "numeric" });
+  const firstDay = (new Date(viewYear, viewMonth, 1).getDay() + 6) % 7;
+  const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+  const dayHeaders = ["MO","TU","WE","TH","FR","SA","SU"];
 
   const cells: (number | null)[] = [];
   for (let i = 0; i < firstDay; i++) cells.push(null);
   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
   while (cells.length % 7 !== 0) cells.push(null);
 
+  const prevMonth = () => {
+    if (viewMonth === 0) { setViewMonth(11); setViewYear(viewYear - 1); }
+    else setViewMonth(viewMonth - 1);
+  };
+  const nextMonth = () => {
+    if (viewMonth === 11) { setViewMonth(0); setViewYear(viewYear + 1); }
+    else setViewMonth(viewMonth + 1);
+  };
+
   return (
     <>
       <div className="cal-header">
-        <button className="cal-arrow">&larr;</button>
+        <button className="cal-arrow" onClick={prevMonth}>&larr;</button>
         <span>{monthName}</span>
-        <button className="cal-arrow">&rarr;</button>
+        <button className="cal-arrow" onClick={nextMonth}>&rarr;</button>
       </div>
       <div className="cal-grid">
-        {days.map(d => <span className="cal-day-header" key={d}>{d}</span>)}
-        {cells.map((d, i) => (
-          <span key={i} className={`cal-day ${d === null ? "empty" : ""} ${d === today ? "today" : ""}`}>
-            {d}
-          </span>
-        ))}
+        {dayHeaders.map(d => <span className="cal-day-header" key={d}>{d}</span>)}
+        {cells.map((d, i) => {
+          if (d === null) return <span key={i} className="cal-day empty" />;
+          const dateStr = `${viewYear}-${String(viewMonth + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+          const isToday = dateStr === todayStr;
+          const isSelected = dateStr === selectedStr;
+          const hasEvent = eventDays.has(dateStr);
+          return (
+            <span
+              key={i}
+              className={`cal-day ${isToday ? "today" : ""} ${isSelected && !isToday ? "selected" : ""} ${hasEvent ? "has-event" : ""}`}
+              onClick={() => onSelectDate(new Date(viewYear, viewMonth, d))}
+              style={{ cursor: "pointer" }}
+            >
+              {d}
+            </span>
+          );
+        })}
       </div>
     </>
   );

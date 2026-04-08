@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from database import get_db
-from models import Patient, CarePlan, CheckIn
+from models import Patient, CarePlan, CheckIn, PatientEvent
 from schemas import ProviderSummary, CheckInOut, PatientOut, CarePlanOut
 
 router = APIRouter(prefix="/api/provider", tags=["provider"])
@@ -105,10 +105,29 @@ def patient_timeline(patient_id: int, db: Session = Depends(get_db)):
         .first()
     )
 
+    # Patient events (task completions, flags, calls, etc.)
+    events = (
+        db.query(PatientEvent)
+        .filter(PatientEvent.patient_id == patient_id)
+        .order_by(PatientEvent.created_at.desc())
+        .limit(50)
+        .all()
+    )
+    events_data = [
+        {
+            "id": e.id,
+            "event_type": e.event_type,
+            "event_data": e.event_data,
+            "created_at": e.created_at.isoformat() if e.created_at else None,
+        }
+        for e in events
+    ]
+
     return {
         "patient": patient,
         "care_plan": care_plan,
         "check_ins": check_ins,
+        "patient_events": events_data,
     }
 
 
@@ -277,6 +296,24 @@ def _patient_status(recent_checkins: list, adherence: float | None) -> str:
         return "Needs Attention"
 
     return "On Track"
+
+
+@router.get("/activity-feed")
+def activity_feed(db: Session = Depends(get_db)):
+    """Return the latest patient events across all patients for the live feed."""
+    events = db.query(PatientEvent).order_by(PatientEvent.created_at.desc()).limit(30).all()
+    results = []
+    for e in events:
+        patient = db.query(Patient).filter(Patient.id == e.patient_id).first()
+        results.append({
+            "id": e.id,
+            "patient_id": e.patient_id,
+            "patient_name": f"{patient.first_name} {patient.last_name}" if patient else "Unknown",
+            "event_type": e.event_type,
+            "event_data": e.event_data,
+            "created_at": e.created_at.isoformat(),
+        })
+    return {"events": results}
 
 
 @router.get("/patients-enriched")

@@ -17,6 +17,7 @@ export const api = {
   listPatients: () => request("/patients/"),
   getPatient: (id: number) => request(`/patients/${id}`),
   enrollPatient: (data: any) => request("/patients/", { method: "POST", body: JSON.stringify(data) }),
+  updatePatient: (id: number, data: any) => request(`/patients/${id}`, { method: "PUT", body: JSON.stringify(data) }),
   recordConsent: (id: number) => request(`/patients/${id}/consent`, { method: "POST" }),
   optOut: (id: number) => request(`/patients/${id}/opt-out`, { method: "POST" }),
 
@@ -39,4 +40,16 @@ export const api = {
   timeline: () => request("/provider/timeline"),
   patientsEnriched: () => request("/provider/patients-enriched"),
   patientTimeline: (patientId: number) => request(`/provider/patient/${patientId}/timeline`),
+  activityFeed: () => request("/provider/activity-feed"),
 };
+
+const WS_URL = "ws://localhost:8000";
+
+export function connectProviderWS(onMessage: (msg: any) => void): WebSocket {
+  const ws = new WebSocket(`${WS_URL}/ws/provider`);
+  ws.onmessage = (e) => {
+    try { onMessage(JSON.parse(e.data)); } catch {}
+  };
+  ws.onclose = () => { setTimeout(() => connectProviderWS(onMessage), 3000); };
+  return ws;
+}

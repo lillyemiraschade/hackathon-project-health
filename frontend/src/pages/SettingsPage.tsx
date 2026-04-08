@@ -10,15 +10,15 @@ export default function SettingsPage() {
           <div className="card-title" style={{ marginBottom: 12 }}>Provider Profile</div>
           <div className="form-group">
             <label>Name</label>
-            <input defaultValue="Dr. Reyes" />
+            <input placeholder="Provider name" />
           </div>
           <div className="form-group">
             <label>Email</label>
-            <input defaultValue="dr.reyes@clinic.example.com" />
+            <input placeholder="provider@clinic.com" />
           </div>
           <div className="form-group">
             <label>Clinic</label>
-            <input defaultValue="Family Medicine Associates" />
+            <input placeholder="Clinic name" />
           </div>
           <button className="btn btn-primary btn-sm">Save</button>
         </div>

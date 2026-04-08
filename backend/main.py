@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from database import init_db
-from routers import patients, care_plans, checkins, provider
+from routers import patients, care_plans, checkins, provider, consumer, websocket
 
 app = FastAPI(
     title="Care Companion",
@@ -19,7 +19,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=["http://localhost:5173", "http://localhost:5174", "http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -29,6 +29,8 @@ app.include_router(patients.router)
 app.include_router(care_plans.router)
 app.include_router(checkins.router)
 app.include_router(provider.router)
+app.include_router(consumer.router)
+app.include_router(websocket.router)
 
 # Serve uploaded images
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")

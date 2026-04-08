@@ -30,6 +30,18 @@ def get_patient(patient_id: int, db: Session = Depends(get_db)):
     return patient
 
 
+@router.put("/{patient_id}", response_model=PatientOut)
+def update_patient(patient_id: int, data: PatientCreate, db: Session = Depends(get_db)):
+    patient = db.query(Patient).filter(Patient.id == patient_id).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    for key, val in data.model_dump().items():
+        setattr(patient, key, val)
+    db.commit()
+    db.refresh(patient)
+    return patient
+
+
 @router.post("/{patient_id}/consent")
 def record_consent(patient_id: int, db: Session = Depends(get_db)):
     patient = db.query(Patient).filter(Patient.id == patient_id).first()

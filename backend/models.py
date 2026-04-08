@@ -124,6 +124,27 @@ class ScheduledReminder(Base):
     care_plan = relationship("CarePlan", back_populates="scheduled_reminders")
 
 
+class PatientEvent(Base):
+    __tablename__ = "patient_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False)
+    event_type = Column(String, nullable=False)  # task_completed, symptom_reported, call_started, call_ended, doc_viewed, flag_triggered, check_in_response
+    event_data = Column(JSON, nullable=True)  # flexible payload
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class PatientSession(Base):
+    __tablename__ = "patient_sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False)
+    token = Column(String, unique=True, nullable=False, index=True)
+    app_state = Column(JSON, nullable=True)  # Stores tasks state, current screen, preferences
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    last_active = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 class AuditLog(Base):
     __tablename__ = "audit_log"
 

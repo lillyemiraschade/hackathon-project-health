@@ -168,6 +168,7 @@ body {
 .cal-day { font-size: 12px; padding: 5px 0; border-radius: 6px; cursor: pointer; }
 .cal-day:hover { background: #ebe5db; }
 .cal-day.today { background: #4a7c59; color: #fff; font-weight: 700; border-radius: 50%; }
+.cal-day.selected { background: #e8e2d8; font-weight: 700; border-radius: 50%; }
 .cal-day.has-event { position: relative; }
 .cal-day.has-event::after {
   content: ''; position: absolute; bottom: 2px; left: 50%;
